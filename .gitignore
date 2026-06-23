@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+test_check.py
+起動.bat
