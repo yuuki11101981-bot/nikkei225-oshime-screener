@@ -35,7 +35,7 @@ with st.sidebar:
     period = st.selectbox("データ取得期間", ["3mo", "6mo", "1y"], index=1,
                           help="長い期間ほど精度が上がりますが時間がかかります")
 
-    max_stocks = st.slider("一度にスキャンする銘柄数", 10, 225, 50, 10,
+    max_stocks = st.slider("一度にスキャンする銘柄数", 10, 225, 225, 10,
                            help="少ないほど速く完了します")
 
     st.divider()
