@@ -14,6 +14,7 @@ from data_fetcher import fetch_ohlcv
 from indicators import add_all_indicators
 from screener import score_ticker
 from breakout_screener import score_breakout
+from chart_skill1 import score_chart_skill1
 
 # ─── ページ設定 ───────────────────────────────────────────────────────────
 st.set_page_config(
@@ -25,7 +26,7 @@ st.set_page_config(
 
 st.title("📈 日経225 銘柄スクリーナー")
 
-tab_oshi, tab_break = st.tabs(["🔽 押し目買い銘柄", "🚀 高値ブレイク銘柄"])
+tab_oshi, tab_break, tab_skill = st.tabs(["🔽 押し目買い銘柄", "🚀 高値ブレイク銘柄", "📖 チャートスキル1"])
 
 
 # ════════════════════════════════════════
@@ -403,6 +404,180 @@ with tab_break:
             - ナンピン（下げ局面での買い増し）は禁止
             - OCO（利確＋逆指値）を必ずセットで発注
             """)
+
+            st.markdown(external_links(r["ticker"]))
+
+
+# ════════════════════════════════════════
+# タブ3: チャートスキル1
+# ════════════════════════════════════════
+
+with tab_skill:
+    st.markdown("""
+    **チャートスキル1** に収録された6つの技法で銘柄をスクリーニングします。
+    N大（ものわかれ）・下半身・逆くちばし・7の法則・前高値ブレイク・キリ値節目を複合評価します。
+    """)
+
+    with st.sidebar:
+        st.divider()
+        st.header("📖 チャートスキル1 設定")
+        min_score_s = st.slider("最低スコア（スキル1）", 0, 100, 40, 5, key="skill_score")
+        period_s = st.selectbox("データ取得期間（スキル1）", ["3mo", "6mo", "1y"], index=1, key="skill_period")
+        max_stocks_s = st.slider("スキャン銘柄数（スキル1）", 10, 225, 225, 10, key="skill_stocks")
+
+        st.divider()
+        st.markdown("""
+        **スコア内訳（チャートスキル1）**
+        - N大（ものわかれ）: 35点
+        - 下半身: 30点
+        - 逆くちばし: 25点
+        - 前高値ブレイク: 15点
+        - キリ値節目: 10点
+        - 上昇初動（1〜3日）: +5点
+        - 上昇7日以上: −20点
+        """)
+        st.markdown("""
+        **主要技法の見方**
+
+        🔵 **N大（ものわかれ）**
+        MA5がMA20に接近後、再び上に離れる→トレンド継続の確認
+
+        🟢 **下半身**
+        MA5が上向き＋陽線実体がMA5をカラダ半分以上超えた→買いシグナル
+
+        🟡 **逆くちばし**
+        上昇中のMA20にMA5が接近後、再び上昇→トレンド加速の初動
+
+        ⚠️ **7の法則**
+        上昇・下落は7日で終わる。5日以上で反転注意
+        """)
+
+    if st.button("🔍 チャートスキル1 スキャン開始", type="primary", use_container_width=True, key="skill_scan"):
+        tickers = get_nikkei225_tickers()[:max_stocks_s]
+        total = len(tickers)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        results = []
+
+        for i, ticker in enumerate(tickers):
+            name = get_company_name(ticker)
+            status_text.text(f"処理中: {name}（{ticker}） [{i+1}/{total}]")
+            progress_bar.progress((i + 1) / total)
+
+            df = fetch_ohlcv(ticker, period=period_s)
+            if df is None:
+                continue
+            df = add_all_indicators(df)
+            result = score_chart_skill1(df)
+
+            if result["score"] < min_score_s:
+                continue
+
+            last = df.iloc[-1]
+            results.append({
+                "ticker": ticker,
+                "name": name,
+                "score": result["score"],
+                "close": last["Close"],
+                "MA5": last.get("MA5"),
+                "MA20": last.get("MA20"),
+                "summary": result["summary"],
+                "_df": df,
+                "_result": result,
+            })
+
+        progress_bar.empty()
+        status_text.empty()
+        results.sort(key=lambda x: x["score"], reverse=True)
+        st.session_state["skill_results"] = results
+
+        if results:
+            st.success(f"スキャン完了！ {len(results)}銘柄が条件を満たしました。")
+        else:
+            st.warning("条件に合致する銘柄が見つかりませんでした。最低スコアを下げてお試しください。")
+
+    if st.session_state.get("skill_results"):
+        results = st.session_state["skill_results"]
+        st.subheader(f"📋 チャートスキル1 候補一覧（{len(results)}件）")
+
+        rule7_labels = {True: "⚠️反転注意", False: ""}
+
+        display_df = pd.DataFrame([{
+            "スコア": r["score"],
+            "コード": r["ticker"].replace(".T", ""),
+            "銘柄名": r["name"],
+            "現在値": f"¥{r['close']:,.0f}",
+            "N大": "✅" if r["_result"]["monoware_bull"]["pass"] else "—",
+            "下半身": "✅" if r["_result"]["shitahanshin"]["pass"] else "—",
+            "逆くちばし": "✅" if r["_result"]["kuchibashi"]["pass"] else "—",
+            "前高値ブレイク": "✅" if r["_result"]["prev_high_break"]["pass"] else "—",
+            "7の法則": r["_result"]["rule_of_7"]["detail"],
+            "コメント": r["summary"],
+        } for r in results])
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True,
+                     column_config={"スコア": st.column_config.ProgressColumn("スコア", min_value=0, max_value=100)})
+
+        st.subheader("📊 詳細チャート（チャートスキル1）")
+        opts = [f"{r['ticker'].replace('.T','')} - {r['name']} (スコア:{r['score']})" for r in results]
+        sel = st.selectbox("銘柄を選択", opts, key="skill_chart_sel")
+
+        if sel:
+            idx = opts.index(sel)
+            r = results[idx]
+            df = r["_df"]
+            result = r["_result"]
+
+            fig = draw_chart(df, f"{r['name']}（{r['ticker']}）")
+            # MA20ラインを追加
+            if "MA20" in df.columns:
+                fig.add_trace(go.Scatter(
+                    x=df.index, y=df["MA20"], name="MA20",
+                    line=dict(color="#00bcd4", width=1.5, dash="dot"),
+                ), row=1, col=1)
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("📝 チャートスキル1 詳細判定")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.markdown("**ものわかれ（N大）**")
+                mw = result["monoware_bull"]
+                st.write(f"{'✅' if mw['pass'] else '❌'} {mw['detail']}")
+                if not mw["pass"]:
+                    st.write(f"　トレンド上昇: {'✅' if mw.get('trend_up') else '❌'}")
+                    st.write(f"　接近あり: {'✅' if mw.get('was_close') else '❌'} (最小乖離{mw.get('min_diff_pct', 0):.1f}%)")
+                    st.write(f"　再離反: {'✅' if mw.get('now_diverging') else '❌'}")
+
+                st.markdown("**前高値ブレイク**")
+                ph = result["prev_high_break"]
+                st.write(f"{'✅' if ph['pass'] else '❌'} {ph['detail']}")
+
+            with col2:
+                st.markdown("**下半身**")
+                sh = result["shitahanshin"]
+                st.write(f"{'✅' if sh['pass'] else '❌'} {sh['detail']}")
+                if not sh["pass"]:
+                    st.write(f"　MA5上向き: {'✅' if sh.get('ma5_flat_or_up') else '❌'}")
+                    st.write(f"　陽線: {'✅' if sh.get('is_bullish') else '❌'}")
+                    st.write(f"　実体MA5超え: {'✅' if sh.get('body_above_ma5') else '❌'}")
+
+                st.markdown("**キリ値節目**")
+                rn = result["round_number"]
+                st.write(f"{'✅' if rn['pass'] else '—'} {rn['detail']}")
+
+            with col3:
+                st.markdown("**逆くちばし**")
+                kb = result["kuchibashi"]
+                st.write(f"{'✅' if kb['pass'] else '❌'} {kb['detail']}")
+
+                st.markdown("**7の法則**")
+                r7 = result["rule_of_7"]
+                if r7["reversal_warning"]:
+                    st.warning(f"⚠️ {r7['detail']}")
+                else:
+                    st.write(f"ℹ️ {r7['detail']}")
+                st.caption("上昇・下落は連続7日で終わりやすい。5日以上で反転を意識。")
 
             st.markdown(external_links(r["ticker"]))
 

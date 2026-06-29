@@ -5,9 +5,10 @@ import pandas as pd
 
 
 def add_moving_averages(df: pd.DataFrame) -> pd.DataFrame:
-    """MA5, MA25, MA75を追加する。"""
+    """MA5, MA20, MA25, MA75を追加する。"""
     df = df.copy()
     df["MA5"] = df["Close"].rolling(5).mean()
+    df["MA20"] = df["Close"].rolling(20).mean()
     df["MA25"] = df["Close"].rolling(25).mean()
     df["MA75"] = df["Close"].rolling(75).mean()
     return df
